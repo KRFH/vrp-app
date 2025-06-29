@@ -162,11 +162,13 @@ DEFAULT_ROWS = (
     if INITIAL_SOLUTION
     else [
         {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0},  # depot
-        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 30},
-        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 30},
-        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 20},
-        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 20},
-        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 15},
+        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 300},
+        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 300},
+        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 200},
+        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 200},
+        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 150},
+        {"id": 6, "x": 10, "y": 10, "demand": 7, "ready": 300, "due": 840, "service": 150},
+        {"id": 7, "x": 50, "y": 80, "demand": 7, "ready": 500, "due": 900, "service": 150},
     ]
 )
 
@@ -381,9 +383,15 @@ def update_graph(tab, sol):
             for row in gantt_data:
                 fig.add_trace(
                     go.Bar(
-                        x=[row["Finish"] - row["Start"],],
-                        base=[row["Start"],],
-                        y=[row["Vehicle"],],
+                        x=[
+                            row["Finish"] - row["Start"],
+                        ],
+                        base=[
+                            row["Start"],
+                        ],
+                        y=[
+                            row["Vehicle"],
+                        ],
                         orientation="h",
                         name=row["Task"],
                         marker_color=palette[color_idx % len(palette)],
