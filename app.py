@@ -257,10 +257,26 @@ def add_row(n_clicks, rows):
 def compute_solution(_, rows, veh, cap):
     try:
         df = pd.DataFrame(rows)
+        numeric = ["id", "x", "y", "demand", "ready", "due", "service"]
+        for col in numeric:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if df[numeric].isnull().any().any():
+            raise ValueError("All numeric fields must have valid numbers")
         if 0 not in df["id"].values:
             raise ValueError("Row with id 0 (depot) is required")
         df = df.sort_values("id")
-        nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service)) for r in df.itertuples()]
+        nodes = [
+            Node(
+                int(r.id),
+                float(r.x),
+                float(r.y),
+                int(r.demand),
+                int(r.ready),
+                int(r.due),
+                int(r.service),
+            )
+            for r in df.itertuples()
+        ]
         routes = _solve_cvrptw(_create_data_model(nodes, int(veh), int(cap)))
 
         summary_rows = [
