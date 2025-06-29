@@ -310,9 +310,29 @@ def update_output(_, tab, rows, veh, cap):  # noqa: D401
                         }
                     )
             if gantt_data:
-                gdf = pd.DataFrame(gantt_data)
-                fig = px.timeline(gdf, x_start="Start", x_end="Finish", y="Vehicle", color="Task", text="Task")
-                fig.update_layout(xaxis=dict(range=[0, 24], title="Hour of day"), yaxis_title="Vehicle", height=500)
+                fig = go.Figure()
+                palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
+                color_idx = 0
+                for row in gantt_data:
+                    fig.add_trace(
+                        go.Bar(
+                            x=[row["Finish"] - row["Start"],],
+                            base=[row["Start"],],
+                            y=[row["Vehicle"],],
+                            orientation="h",
+                            name=row["Task"],
+                            marker_color=palette[color_idx % len(palette)],
+                            text=row["Task"],
+                            textposition="inside",
+                        )
+                    )
+                    color_idx += 1
+                fig.update_layout(
+                    xaxis=dict(range=[0, 24], title="Hour of day"),
+                    yaxis_title="Vehicle",
+                    height=500,
+                    barmode="overlay",
+                )
                 fig.update_yaxes(autorange="reversed")
             else:
                 fig = go.Figure()
