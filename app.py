@@ -49,6 +49,7 @@ class Node:
     ready: int  # earliest time (minutes)
     due: int  # latest time (minutes)
     service: int  # service duration (minutes)
+    task: str = ""  # required skill/task
 
 
 @dataclass
@@ -153,6 +154,41 @@ def _solve_cvrptw(data: dict) -> List[Route]:
     return routes
 
 
+def _parse_workers(text: str, veh_count: int) -> List[dict]:
+    workers = []
+    if text:
+        for part in text.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            if ':' in part:
+                name, skill_str = part.split(':', 1)
+                skills = {s.strip() for s in skill_str.split('|') if s.strip()}
+            else:
+                name = part
+                skills = set()
+            workers.append({'name': name.strip(), 'skills': skills})
+    while len(workers) < veh_count:
+        workers.append({'name': f"Worker {len(workers)}", 'skills': set()})
+    return workers[:veh_count]
+
+
+def _assign_workers(routes: List[Route], nodes: Dict[int, Node], workers: List[dict]) -> Dict[int, str]:
+    remaining = workers.copy()
+    assignments: Dict[int, str] = {}
+    for r in routes:
+        required = {nodes[nid].task for nid in r.path if nid != 0 and nodes[nid].task}
+        idx = next((i for i, w in enumerate(remaining) if required.issubset(w['skills'])), None)
+        if idx is None:
+            idx = 0 if remaining else None
+        if idx is not None:
+            worker = remaining.pop(idx)
+        else:
+            worker = {'name': f"Worker {r.vehicle_id}", 'skills': set()}
+        assignments[r.vehicle_id] = worker['name']
+    return assignments
+
+
 # --------------------------------------------------------------------------------------
 # Dash UI
 # --------------------------------------------------------------------------------------
@@ -161,18 +197,18 @@ DEFAULT_ROWS = (
     INITIAL_SOLUTION["nodes"]
     if INITIAL_SOLUTION
     else [
-        {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0},  # depot
-        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 300},
-        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 300},
-        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 200},
-        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 200},
-        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 150},
-        {"id": 6, "x": 10, "y": 10, "demand": 7, "ready": 300, "due": 840, "service": 150},
-        {"id": 7, "x": 50, "y": 80, "demand": 7, "ready": 500, "due": 900, "service": 150},
+        {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0, "task": "depot"},
+        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 300, "task": "delivery"},
+        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 300, "task": "repair"},
+        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 200, "task": "delivery"},
+        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 200, "task": "maintenance"},
+        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 150, "task": "delivery"},
+        {"id": 6, "x": 10, "y": 10, "demand": 7, "ready": 300, "due": 840, "service": 150, "task": "repair"},
+        {"id": 7, "x": 50, "y": 80, "demand": 7, "ready": 500, "due": 900, "service": 150, "task": "maintenance"},
     ]
 )
 
-COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "due", "service"]]
+COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "due", "service", "task"]]
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "CVRPTW Solver"
@@ -205,7 +241,10 @@ app.layout = dbc.Container(
                         ),
                         html.Br(),
                         dbc.InputGroup(
-                            [dbc.InputGroupText("Workers"), dbc.Input(id="workers", type="text", placeholder="Comma-separated")]
+                            [
+                                dbc.InputGroupText("Workers"),
+                                dbc.Input(id="workers", type="text", placeholder="Name:skill1|skill2, ..."),
+                            ]
                         ),
                         html.Br(),
                         dbc.Button("Solve", id="solve", color="primary"),
@@ -245,7 +284,7 @@ app.layout = dbc.Container(
 def add_row(n_clicks, rows):
     if n_clicks:
         next_id = max(r["id"] for r in rows) + 1 if rows else 1
-        rows.append({"id": next_id, "x": 0, "y": 0, "demand": 1, "ready": 0, "due": 1440, "service": 10})
+        rows.append({"id": next_id, "x": 0, "y": 0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""})
     return rows
 
 
@@ -281,35 +320,43 @@ def compute_solution(_, rows, veh, cap, workers):
                 int(r.ready),
                 int(r.due),
                 int(r.service),
+                str(r.task),
             )
             for r in df.itertuples()
         ]
         routes = _solve_cvrptw(_create_data_model(nodes, int(veh), int(cap)))
 
-        worker_list = [w.strip() for w in workers.split(",")] if workers else []
         veh_count = int(veh)
-        if len(worker_list) < veh_count:
-            worker_list += [f"Worker {i}" for i in range(len(worker_list), veh_count)]
-        else:
-            worker_list = worker_list[:veh_count]
+        worker_info = _parse_workers(workers or "", veh_count)
+        id2node = {n.idx: n for n in nodes}
+        assignments = _assign_workers(routes, id2node, worker_info)
 
-        summary_rows = [
-            {
-                "Vehicle": r.vehicle_id,
-                "Worker": worker_list[r.vehicle_id],
-                "Path(arrival)": " → ".join(f"{nid}({arr})" for nid, arr in zip(r.path, r.arrival_times)),
-                "Distance": r.distance,
-                "Load": r.load,
-            }
-            for r in routes
-        ]
-        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Worker", "Path(arrival)", "Distance", "Load"]]
+        worker_list = [w["name"] for w in worker_info]
+
+        summary_rows = []
+        for r in routes:
+            required = {id2node[nid].task for nid in r.path if nid != 0 and id2node[nid].task}
+            summary_rows.append(
+                {
+                    "Vehicle": r.vehicle_id,
+                    "Worker": assignments.get(r.vehicle_id, worker_list[r.vehicle_id]),
+                    "Tasks": ", ".join(sorted(required)),
+                    "Path(arrival)": " → ".join(f"{nid}({arr})" for nid, arr in zip(r.path, r.arrival_times)),
+                    "Distance": r.distance,
+                    "Load": r.load,
+                }
+            )
+        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Worker", "Tasks", "Path(arrival)", "Distance", "Load"]]
 
         solution = {
             "nodes": df.to_dict("records"),
             "veh": int(veh),
             "cap": int(cap),
-            "workers": worker_list,
+            "workers": [
+                {"name": w["name"], "skills": sorted(list(w["skills"]))}
+                for w in worker_info
+            ],
+            "assignments": assignments,
             "routes": [
                 {
                     "vehicle_id": r.vehicle_id,
@@ -342,10 +389,11 @@ def update_graph(tab, sol):
         return go.Figure()
 
     df = pd.DataFrame(sol["nodes"]).sort_values("id")
-    nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service)) for r in df.itertuples()]
+    nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", "")) for r in df.itertuples()]
     id2node: Dict[int, Node] = {n.idx: n for n in nodes}
     routes = [Route(**r) for r in sol["routes"]]
-    workers = sol.get("workers", [])
+    worker_info = sol.get("workers", [])
+    assignments = sol.get("assignments", {})
 
     if tab == "map":
         fig = go.Figure()
@@ -362,7 +410,9 @@ def update_graph(tab, sol):
         )
         palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
         for r in routes:
-            worker = workers[r.vehicle_id] if r.vehicle_id < len(workers) else f"Worker {r.vehicle_id}"
+            worker = assignments.get(r.vehicle_id)
+            if worker is None:
+                worker = worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
             xs = [id2node[nid].x for nid in r.path]
             ys = [id2node[nid].y for nid in r.path]
             fig.add_trace(
@@ -384,7 +434,9 @@ def update_graph(tab, sol):
                     continue
                 start = r.arrival_times[idx] / 60.0
                 finish = (r.arrival_times[idx] + id2node[nid].service) / 60.0
-                worker = workers[r.vehicle_id] if r.vehicle_id < len(workers) else f"Worker {r.vehicle_id}"
+                worker = assignments.get(r.vehicle_id)
+                if worker is None:
+                    worker = worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
                 gantt_data.append(
                     {
                         "Worker": worker,
