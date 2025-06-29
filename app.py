@@ -204,6 +204,10 @@ app.layout = dbc.Container(
                             [dbc.InputGroupText("Capacity"), dbc.Input(id="cap", type="number", value=35, min=1)]
                         ),
                         html.Br(),
+                        dbc.InputGroup(
+                            [dbc.InputGroupText("Workers"), dbc.Input(id="workers", type="text", placeholder="Comma-separated")]
+                        ),
+                        html.Br(),
                         dbc.Button("Solve", id="solve", color="primary"),
                         html.Span(id="msg", className="text-danger ms-2"),
                     ],
@@ -254,9 +258,10 @@ def add_row(n_clicks, rows):
     State("table", "data"),
     State("veh", "value"),
     State("cap", "value"),
+    State("workers", "value"),
     prevent_initial_call=True,
 )
-def compute_solution(_, rows, veh, cap):
+def compute_solution(_, rows, veh, cap, workers):
     try:
         df = pd.DataFrame(rows)
         numeric = ["id", "x", "y", "demand", "ready", "due", "service"]
@@ -281,21 +286,30 @@ def compute_solution(_, rows, veh, cap):
         ]
         routes = _solve_cvrptw(_create_data_model(nodes, int(veh), int(cap)))
 
+        worker_list = [w.strip() for w in workers.split(",")] if workers else []
+        veh_count = int(veh)
+        if len(worker_list) < veh_count:
+            worker_list += [f"Worker {i}" for i in range(len(worker_list), veh_count)]
+        else:
+            worker_list = worker_list[:veh_count]
+
         summary_rows = [
             {
                 "Vehicle": r.vehicle_id,
+                "Worker": worker_list[r.vehicle_id],
                 "Path(arrival)": " → ".join(f"{nid}({arr})" for nid, arr in zip(r.path, r.arrival_times)),
                 "Distance": r.distance,
                 "Load": r.load,
             }
             for r in routes
         ]
-        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Path(arrival)", "Distance", "Load"]]
+        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Worker", "Path(arrival)", "Distance", "Load"]]
 
         solution = {
             "nodes": df.to_dict("records"),
             "veh": int(veh),
             "cap": int(cap),
+            "workers": worker_list,
             "routes": [
                 {
                     "vehicle_id": r.vehicle_id,
@@ -331,6 +345,7 @@ def update_graph(tab, sol):
     nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service)) for r in df.itertuples()]
     id2node: Dict[int, Node] = {n.idx: n for n in nodes}
     routes = [Route(**r) for r in sol["routes"]]
+    workers = sol.get("workers", [])
 
     if tab == "map":
         fig = go.Figure()
@@ -347,6 +362,7 @@ def update_graph(tab, sol):
         )
         palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
         for r in routes:
+            worker = workers[r.vehicle_id] if r.vehicle_id < len(workers) else f"Worker {r.vehicle_id}"
             xs = [id2node[nid].x for nid in r.path]
             ys = [id2node[nid].y for nid in r.path]
             fig.add_trace(
@@ -356,7 +372,7 @@ def update_graph(tab, sol):
                     mode="lines+markers",
                     marker=dict(size=6),
                     line=dict(width=2, color=palette[r.vehicle_id % len(palette)]),
-                    name=f"Veh {r.vehicle_id} (d={r.distance})",
+                    name=f"{worker} (Veh {r.vehicle_id}, d={r.distance})",
                 )
             )
         fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), xaxis_title="X", yaxis_title="Y", height=500)
@@ -368,9 +384,10 @@ def update_graph(tab, sol):
                     continue
                 start = r.arrival_times[idx] / 60.0
                 finish = (r.arrival_times[idx] + id2node[nid].service) / 60.0
+                worker = workers[r.vehicle_id] if r.vehicle_id < len(workers) else f"Worker {r.vehicle_id}"
                 gantt_data.append(
                     {
-                        "Vehicle": f"Veh {r.vehicle_id}",
+                        "Worker": worker,
                         "Task": f"Node {nid}",
                         "Start": start,
                         "Finish": finish,
@@ -390,7 +407,7 @@ def update_graph(tab, sol):
                             row["Start"],
                         ],
                         y=[
-                            row["Vehicle"],
+                            row["Worker"],
                         ],
                         orientation="h",
                         name=row["Task"],
@@ -402,7 +419,7 @@ def update_graph(tab, sol):
                 color_idx += 1
             fig.update_layout(
                 xaxis=dict(range=[0, 24], title="Hour of day"),
-                yaxis_title="Vehicle",
+                yaxis_title="Worker",
                 height=500,
                 barmode="overlay",
             )
