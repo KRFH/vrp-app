@@ -1,170 +1,63 @@
 """Dash app for interactive CVRPTW with Gantt Visualization
 ===========================================================
-Fully working version – fixes truncated code and ensures Gantt tab refreshes
-correctly when switched.
-
-Features
---------
-* **Editable table** for nodes (no CSV upload)
-* **Map** view with routes & nodes
-* **Gantt** view on a 24‑hour timeline (arrival + service)
-* Recalculates solution on **Solve** click *or* tab switch
-
-Usage
------
-```bash
-pip install dash==2.15.0 dash-bootstrap-components plotly pandas numpy ortools
-python cvrp_dash_app.py
-# → browse to http://127.0.0.1:8050/
-```
+Modular version with pluggable solvers.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
 from typing import Dict, List
 
 import dash
 import dash_bootstrap_components as dbc
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html
 from dash import dash_table  # type: ignore
-from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+
+from models import Node, Route, create_data_model
+from solver_factory import SolverFactory
+from worker_assignment import parse_workers, assign_workers
 
 # --------------------------------------------------------------------------------------
-# Data models
+# Configuration
 # --------------------------------------------------------------------------------------
 
+SOLUTION_FILE = "solution_cache.json"
+try:
+    with open(SOLUTION_FILE) as f:
+        INITIAL_SOLUTION = json.load(f)
+except FileNotFoundError:
+    INITIAL_SOLUTION = None
 
-@dataclass
-class Node:
-    idx: int
-    x: float
-    y: float
-    demand: int
-    ready: int  # earliest time (minutes)
-    due: int  # latest time (minutes)
-    service: int  # service duration (minutes)
+DEFAULT_ROWS = (
+    INITIAL_SOLUTION["nodes"]
+    if INITIAL_SOLUTION
+    else [
+        {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0, "task": "depot"},
+        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 300, "task": "delivery"},
+        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 300, "task": "repair"},
+        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 200, "task": "delivery"},
+        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 200, "task": "maintenance"},
+        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 150, "task": "delivery"},
+        {"id": 6, "x": 10, "y": 10, "demand": 7, "ready": 300, "due": 840, "service": 150, "task": "repair"},
+        {"id": 7, "x": 50, "y": 80, "demand": 7, "ready": 500, "due": 900, "service": 150, "task": "maintenance"},
+    ]
+)
 
-
-@dataclass
-class Route:
-    vehicle_id: int
-    path: List[int]
-    arrival_times: List[int]
-    distance: int
-    load: int
-
-
-# --------------------------------------------------------------------------------------
-# OR‑Tools helpers
-# --------------------------------------------------------------------------------------
-
-
-def _euclidean_distance_matrix(coords: np.ndarray) -> np.ndarray:
-    diff = coords[:, None, :] - coords[None, :, :]
-    return np.linalg.norm(diff, axis=-1).round().astype(int)
-
-
-def _create_data_model(nodes: List[Node], num_veh: int, cap: int):
-    return {
-        "distance_matrix": _euclidean_distance_matrix(np.array([[n.x, n.y] for n in nodes])),
-        "demands": [n.demand for n in nodes],
-        "ready_times": [n.ready for n in nodes],
-        "due_times": [n.due for n in nodes],
-        "service_times": [n.service for n in nodes],
-        "vehicle_capacities": [cap] * num_veh,
-        "num_vehicles": num_veh,
-        "depot": 0,
-    }
-
-
-def _solve_cvrptw(data: dict) -> List[Route]:
-    mgr = pywrapcp.RoutingIndexManager(len(data["distance_matrix"]), data["num_vehicles"], data["depot"])
-    routing = pywrapcp.RoutingModel(mgr)
-
-    # cost: distance
-    dist_cb_idx = routing.RegisterTransitCallback(
-        lambda i, j: data["distance_matrix"][mgr.IndexToNode(i)][mgr.IndexToNode(j)]
-    )
-    routing.SetArcCostEvaluatorOfAllVehicles(dist_cb_idx)
-
-    # time callback = travel + service at origin
-    time_cb_idx = routing.RegisterTransitCallback(
-        lambda i, j: data["distance_matrix"][mgr.IndexToNode(i)][mgr.IndexToNode(j)]
-        + data["service_times"][mgr.IndexToNode(i)]
-    )
-
-    # Time dimension (with waiting slack)
-    routing.AddDimension(
-        time_cb_idx,
-        1000,  # slack (waiting)
-        max(data["due_times"]) + 60,
-        False,
-        "Time",
-    )
-    time_dim = routing.GetDimensionOrDie("Time")
-
-    # Capacity dimension
-    demand_cb_idx = routing.RegisterUnaryTransitCallback(lambda i: data["demands"][mgr.IndexToNode(i)])
-    routing.AddDimensionWithVehicleCapacity(demand_cb_idx, 0, data["vehicle_capacities"], True, "Capacity")
-
-    # Apply time‑window constraints
-    for node_index, (ready, due) in enumerate(zip(data["ready_times"], data["due_times"])):
-        time_dim.CumulVar(mgr.NodeToIndex(node_index)).SetRange(ready, due)
-
-    # Search params
-    params = pywrapcp.DefaultRoutingSearchParameters()
-    params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-    params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    params.time_limit.FromSeconds(15)
-
-    sol = routing.SolveWithParameters(params)
-    if not sol:
-        raise RuntimeError("No feasible solution found.")
-
-    routes: List[Route] = []
-    for v in range(data["num_vehicles"]):
-        idx = routing.Start(v)
-        path, arr, dist, load = [], [], 0, 0
-        while not routing.IsEnd(idx):
-            n = mgr.IndexToNode(idx)
-            path.append(n)
-            arr.append(sol.Value(time_dim.CumulVar(idx)))
-            load += data["demands"][n]
-            prev = idx
-            idx = sol.Value(routing.NextVar(idx))
-            dist += routing.GetArcCostForVehicle(prev, idx, v)
-        path.append(data["depot"])
-        arr.append(sol.Value(time_dim.CumulVar(idx)))
-        routes.append(Route(v, path, arr, dist, load))
-    return routes
-
+COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "due", "service", "task"]]
 
 # --------------------------------------------------------------------------------------
 # Dash UI
 # --------------------------------------------------------------------------------------
 
-DEFAULT_ROWS = [
-    {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0},  # depot
-    {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 30},
-    {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 30},
-    {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 20},
-    {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 20},
-    {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 15},
-]
-
-COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "due", "service"]]
-
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.title = "CVRPTW Solver"
+app.title = "CVRPTW Solver (Modular)"
 
 app.layout = dbc.Container(
     [
-        html.H2("CVRPTW – Editable Table & 24‑hour Gantt"),
+        html.H2("CVRPTW – Modular Solver with 24‑hour Gantt"),
         dbc.Row(
             [
                 # -------- left: parameters --------
@@ -189,6 +82,28 @@ app.layout = dbc.Container(
                             [dbc.InputGroupText("Capacity"), dbc.Input(id="cap", type="number", value=35, min=1)]
                         ),
                         html.Br(),
+                        dbc.InputGroup(
+                            [
+                                dbc.InputGroupText("Solver"),
+                                dcc.Dropdown(
+                                    id="solver-select",
+                                    options=[
+                                        {"label": name, "value": name} 
+                                        for name in SolverFactory.get_available_solvers()
+                                    ],
+                                    value="ortools",
+                                    clearable=False,
+                                ),
+                            ]
+                        ),
+                        html.Br(),
+                        dbc.InputGroup(
+                            [
+                                dbc.InputGroupText("Workers"),
+                                dbc.Input(id="workers", type="text", placeholder="Name:skill1|skill2, ..."),
+                            ]
+                        ),
+                        html.Br(),
                         dbc.Button("Solve", id="solve", color="primary"),
                         html.Span(id="msg", className="text-danger ms-2"),
                     ],
@@ -206,6 +121,7 @@ app.layout = dbc.Container(
                             ],
                         ),
                         dcc.Loading(children=[dcc.Graph(id="graph"), dash_table.DataTable(id="summary")]),
+                        dcc.Store(id="solution-store", data=INITIAL_SOLUTION),
                     ],
                     width=8,
                 ),
@@ -225,102 +141,215 @@ app.layout = dbc.Container(
 def add_row(n_clicks, rows):
     if n_clicks:
         next_id = max(r["id"] for r in rows) + 1 if rows else 1
-        rows.append({"id": next_id, "x": 0, "y": 0, "demand": 1, "ready": 0, "due": 1440, "service": 10})
+        rows.append({"id": next_id, "x": 0, "y": 0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""})
     return rows
 
 
 @app.callback(
-    Output("graph", "figure"),
+    Output("solution-store", "data"),
     Output("summary", "data"),
     Output("summary", "columns"),
     Output("msg", "children"),
     Input("solve", "n_clicks"),
-    Input("tab", "value"),  # recalc when switching tabs too
     State("table", "data"),
     State("veh", "value"),
     State("cap", "value"),
+    State("solver-select", "value"),
+    State("workers", "value"),
     prevent_initial_call=True,
 )
-def update_output(_, tab, rows, veh, cap):  # noqa: D401
+def compute_solution(_, rows, veh, cap, solver_name, workers):
     try:
-        # --- prepare data ---------------------------------
+        # Parse input data
         df = pd.DataFrame(rows)
+        numeric = ["id", "x", "y", "demand", "ready", "due", "service"]
+        for col in numeric:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if df[numeric].isnull().any().any():
+            raise ValueError("All numeric fields must have valid numbers")
         if 0 not in df["id"].values:
             raise ValueError("Row with id 0 (depot) is required")
         df = df.sort_values("id")
-        nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service)) for r in df.itertuples()]
-        routes = _solve_cvrptw(_create_data_model(nodes, int(veh), int(cap)))
-        id2node: Dict[int, Node] = {n.idx: n for n in nodes}
-
-        # --- summary table -------------------------------
-        summary_rows = [
-            {
-                "Vehicle": r.vehicle_id,
-                "Path(arrival)": " → ".join(f"{nid}({arr})" for nid, arr in zip(r.path, r.arrival_times)),
-                "Distance": r.distance,
-                "Load": r.load,
-            }
-            for r in routes
-        ]
-        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Path(arrival)", "Distance", "Load"]]
-
-        # --- figures ------------------------------------
-        if tab == "map":
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=df.x,
-                    y=df.y,
-                    mode="markers+text",
-                    text=df.id,
-                    textposition="top center",
-                    marker=dict(size=10),
-                    name="Nodes",
-                )
+        
+        # Create nodes
+        nodes = [
+            Node(
+                int(r.id),
+                float(r.x),
+                float(r.y),
+                int(r.demand),
+                int(r.ready),
+                int(r.due),
+                int(r.service),
+                str(r.task),
             )
-            palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
-            for r in routes:
-                xs = [id2node[nid].x for nid in r.path]
-                ys = [id2node[nid].y for nid in r.path]
-                fig.add_trace(
-                    go.Scatter(
-                        x=xs,
-                        y=ys,
-                        mode="lines+markers",
-                        marker=dict(size=6),
-                        line=dict(width=2, color=palette[r.vehicle_id % len(palette)]),
-                        name=f"Veh {r.vehicle_id} (d={r.distance})",
-                    )
-                )
-            fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), xaxis_title="X", yaxis_title="Y", height=500)
-        else:  # gantt
-            gantt_data = []
-            for r in routes:
-                for idx, nid in enumerate(r.path[:-1]):  # exclude final depot return
-                    if nid == 0:
-                        continue  # skip depot in gantt
-                    start = r.arrival_times[idx] / 60.0
-                    finish = (r.arrival_times[idx] + id2node[nid].service) / 60.0
-                    gantt_data.append(
-                        {
-                            "Vehicle": f"Veh {r.vehicle_id}",
-                            "Task": f"Node {nid}",
-                            "Start": start,
-                            "Finish": finish,
-                        }
-                    )
-            if gantt_data:
-                gdf = pd.DataFrame(gantt_data)
-                fig = px.timeline(gdf, x_start="Start", x_end="Finish", y="Vehicle", color="Task", text="Task")
-                fig.update_layout(xaxis=dict(range=[0, 24], title="Hour of day"), yaxis_title="Vehicle", height=500)
-                fig.update_yaxes(autorange="reversed")
-            else:
-                fig = go.Figure()
+            for r in df.itertuples()
+        ]
+        
+        # Create solver and solve
+        solver = SolverFactory.create_solver(solver_name)
+        data_model = create_data_model(nodes, int(veh), int(cap))
+        routes = solver.solve(data_model)
 
-        return fig, summary_rows, summary_cols, ""
+        # Assign workers
+        veh_count = int(veh)
+        worker_info = parse_workers(workers or "", veh_count)
+        id2node = {n.idx: n for n in nodes}
+        assignments = assign_workers(routes, id2node, worker_info)
+
+        worker_list = [w["name"] for w in worker_info]
+
+        # Create summary
+        summary_rows = []
+        for r in routes:
+            required = {id2node[nid].task for nid in r.path if nid != 0 and id2node[nid].task}
+            summary_rows.append(
+                {
+                    "Vehicle": r.vehicle_id,
+                    "Worker": assignments.get(r.vehicle_id, worker_list[r.vehicle_id]),
+                    "Tasks": ", ".join(sorted(required)),
+                    "Path(arrival)": " → ".join(f"{nid}({arr})" for nid, arr in zip(r.path, r.arrival_times)),
+                    "Distance": r.distance,
+                    "Load": r.load,
+                }
+            )
+        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Worker", "Tasks", "Path(arrival)", "Distance", "Load"]]
+
+        # Create solution object
+        solution = {
+            "nodes": df.to_dict("records"),
+            "veh": int(veh),
+            "cap": int(cap),
+            "solver": solver_name,
+            "workers": [
+                {"name": w["name"], "skills": sorted(list(w["skills"]))}
+                for w in worker_info
+            ],
+            "assignments": assignments,
+            "routes": [
+                {
+                    "vehicle_id": r.vehicle_id,
+                    "path": r.path,
+                    "arrival_times": r.arrival_times,
+                    "distance": r.distance,
+                    "load": r.load,
+                }
+                for r in routes
+            ],
+        }
+
+        # Save solution
+        with open(SOLUTION_FILE, "w") as f:
+            json.dump(solution, f)
+
+        return solution, summary_rows, summary_cols, f"Solved using {solver.get_solver_name()}"
 
     except Exception as e:
-        return go.Figure(), [], [], f"Error: {e}"
+        return dash.no_update, [], [], f"Error: {e}"
+
+
+@app.callback(
+    Output("graph", "figure"),
+    Input("tab", "value"),
+    Input("solution-store", "data"),
+    prevent_initial_call=True,
+)
+def update_graph(tab, sol):
+    if not sol:
+        return go.Figure()
+
+    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+    nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", "")) for r in df.itertuples()]
+    id2node: Dict[int, Node] = {n.idx: n for n in nodes}
+    routes = [Route(**r) for r in sol["routes"]]
+    worker_info = sol.get("workers", [])
+    assignments = sol.get("assignments", {})
+
+    if tab == "map":
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df.x,
+                y=df.y,
+                mode="markers+text",
+                text=df.id,
+                textposition="top center",
+                marker=dict(size=10),
+                name="Nodes",
+            )
+        )
+        palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
+        for r in routes:
+            worker = assignments.get(r.vehicle_id)
+            if worker is None:
+                worker = worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
+            xs = [id2node[nid].x for nid in r.path]
+            ys = [id2node[nid].y for nid in r.path]
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=ys,
+                    mode="lines+markers",
+                    marker=dict(size=6),
+                    line=dict(width=2, color=palette[r.vehicle_id % len(palette)]),
+                    name=f"{worker} (Veh {r.vehicle_id}, d={r.distance})",
+                )
+            )
+        fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), xaxis_title="X", yaxis_title="Y", height=500)
+    else:
+        gantt_data = []
+        for r in routes:
+            for idx, nid in enumerate(r.path[:-1]):
+                if nid == 0:
+                    continue
+                start = r.arrival_times[idx] / 60.0
+                finish = (r.arrival_times[idx] + id2node[nid].service) / 60.0
+                worker = assignments.get(r.vehicle_id)
+                if worker is None:
+                    worker = worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
+                gantt_data.append(
+                    {
+                        "Worker": worker,
+                        "Task": f"Node {nid}",
+                        "Start": start,
+                        "Finish": finish,
+                    }
+                )
+        if gantt_data:
+            fig = go.Figure()
+            palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
+            color_idx = 0
+            for row in gantt_data:
+                fig.add_trace(
+                    go.Bar(
+                        x=[
+                            row["Finish"] - row["Start"],
+                        ],
+                        base=[
+                            row["Start"],
+                        ],
+                        y=[
+                            row["Worker"],
+                        ],
+                        orientation="h",
+                        name=row["Task"],
+                        marker_color=palette[color_idx % len(palette)],
+                        text=row["Task"],
+                        textposition="inside",
+                    )
+                )
+                color_idx += 1
+            fig.update_layout(
+                xaxis=dict(range=[0, 24], title="Hour of day"),
+                yaxis_title="Worker",
+                height=500,
+                barmode="overlay",
+            )
+            fig.update_yaxes(autorange="reversed")
+        else:
+            fig = go.Figure()
+
+    return fig
 
 
 # --------------------------------------------------------------------------------------
@@ -328,4 +357,4 @@ def update_output(_, tab, rows, veh, cap):  # noqa: D401
 # --------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run_server(debug=True, use_reloader=False)
+    app.run_server(debug=True, use_reloader=False) 
