@@ -4,19 +4,25 @@ Abstract base class for CVRPTW solvers.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Dict, List, Any
 
 from models import Route
 
 
 class CVRPTWSolver(ABC):
     """Abstract base class for CVRPTW solvers."""
-    
-    @abstractmethod
+
+    def __init__(self):
+        """Initialize solver with empty state."""
+        self.data = None
+        self.variables = {}
+        self.constraints = []
+        self.objective = None
+
     def solve(self, data: Dict) -> List[Route]:
         """
-        Solve CVRPTW problem.
-        
+        Solve CVRPTW problem using the template method pattern.
+
         Args:
             data: Dictionary containing problem data with keys:
                 - distance_matrix: 2D array of distances
@@ -27,13 +33,60 @@ class CVRPTWSolver(ABC):
                 - vehicle_capacities: List of vehicle capacities
                 - num_vehicles: Number of vehicles
                 - depot: Depot node index
-                
+
         Returns:
             List of Route objects representing the solution
         """
+        self.data = data
+        self.variables = {}
+        self.constraints = []
+        self.objective = None
+
+        # Template method pattern: define the solving process
+        self._initialize_solver()
+        self._define_variables()
+        self._define_objective()
+        self._define_constraints()
+        self._configure_search_parameters()
+        solution = self._solve_problem()
+        return self._extract_solution(solution)
+
+    @abstractmethod
+    def _initialize_solver(self) -> None:
+        """Initialize the underlying solver engine."""
         pass
-    
+
+    @abstractmethod
+    def _define_variables(self) -> None:
+        """Define decision variables for the problem."""
+        pass
+
+    @abstractmethod
+    def _define_objective(self) -> None:
+        """Define the objective function to minimize/maximize."""
+        pass
+
+    @abstractmethod
+    def _define_constraints(self) -> None:
+        """Define all problem constraints."""
+        pass
+
+    @abstractmethod
+    def _configure_search_parameters(self) -> None:
+        """Configure search parameters and strategies."""
+        pass
+
+    @abstractmethod
+    def _solve_problem(self) -> Any:
+        """Execute the solving process and return raw solution."""
+        pass
+
+    @abstractmethod
+    def _extract_solution(self, raw_solution: Any) -> List[Route]:
+        """Extract Route objects from the raw solution."""
+        pass
+
     @abstractmethod
     def get_solver_name(self) -> str:
         """Return the name of this solver."""
-        pass 
+        pass
