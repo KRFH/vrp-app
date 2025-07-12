@@ -24,7 +24,7 @@ from worker_assignment import parse_workers, assign_workers
 # Configuration
 # --------------------------------------------------------------------------------------
 
-SOLUTION_FILE = "solution_cache.json"
+SOLUTION_FILE = "data/solution_cache.json"
 try:
     with open(SOLUTION_FILE) as f:
         INITIAL_SOLUTION = json.load(f)
@@ -88,8 +88,7 @@ app.layout = dbc.Container(
                                 dcc.Dropdown(
                                     id="solver-select",
                                     options=[
-                                        {"label": name, "value": name} 
-                                        for name in SolverFactory.get_available_solvers()
+                                        {"label": name, "value": name} for name in SolverFactory.get_available_solvers()
                                     ],
                                     value="ortools",
                                     clearable=False,
@@ -100,7 +99,12 @@ app.layout = dbc.Container(
                         dbc.InputGroup(
                             [
                                 dbc.InputGroupText("Workers"),
-                                dbc.Input(id="workers", type="text", placeholder="Name:skill1|skill2, ..."),
+                                dbc.Input(
+                                    id="workers",
+                                    type="text",
+                                    placeholder="Name:skill1|skill2, ...",
+                                    value="A:delivery, B:repair, C:maintenance",
+                                ),
                             ]
                         ),
                         html.Br(),
@@ -170,7 +174,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
         if 0 not in df["id"].values:
             raise ValueError("Row with id 0 (depot) is required")
         df = df.sort_values("id")
-        
+
         # Create nodes
         nodes = [
             Node(
@@ -185,7 +189,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
             )
             for r in df.itertuples()
         ]
-        
+
         # Create solver and solve
         solver = SolverFactory.create_solver(solver_name)
         data_model = create_data_model(nodes, int(veh), int(cap))
@@ -213,7 +217,9 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
                     "Load": r.load,
                 }
             )
-        summary_cols = [{"name": c, "id": c} for c in ["Vehicle", "Worker", "Tasks", "Path(arrival)", "Distance", "Load"]]
+        summary_cols = [
+            {"name": c, "id": c} for c in ["Vehicle", "Worker", "Tasks", "Path(arrival)", "Distance", "Load"]
+        ]
 
         # Create solution object
         solution = {
@@ -221,10 +227,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
             "veh": int(veh),
             "cap": int(cap),
             "solver": solver_name,
-            "workers": [
-                {"name": w["name"], "skills": sorted(list(w["skills"]))}
-                for w in worker_info
-            ],
+            "workers": [{"name": w["name"], "skills": sorted(list(w["skills"]))} for w in worker_info],
             "assignments": assignments,
             "routes": [
                 {
@@ -259,7 +262,10 @@ def update_graph(tab, sol):
         return go.Figure()
 
     df = pd.DataFrame(sol["nodes"]).sort_values("id")
-    nodes = [Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", "")) for r in df.itertuples()]
+    nodes = [
+        Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", ""))
+        for r in df.itertuples()
+    ]
     id2node: Dict[int, Node] = {n.idx: n for n in nodes}
     routes = [Route(**r) for r in sol["routes"]]
     worker_info = sol.get("workers", [])
@@ -282,7 +288,9 @@ def update_graph(tab, sol):
         for r in routes:
             worker = assignments.get(r.vehicle_id)
             if worker is None:
-                worker = worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
+                worker = (
+                    worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
+                )
             xs = [id2node[nid].x for nid in r.path]
             ys = [id2node[nid].y for nid in r.path]
             fig.add_trace(
@@ -306,7 +314,11 @@ def update_graph(tab, sol):
                 finish = (r.arrival_times[idx] + id2node[nid].service) / 60.0
                 worker = assignments.get(r.vehicle_id)
                 if worker is None:
-                    worker = worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
+                    worker = (
+                        worker_info[r.vehicle_id]["name"]
+                        if r.vehicle_id < len(worker_info)
+                        else f"Worker {r.vehicle_id}"
+                    )
                 gantt_data.append(
                     {
                         "Worker": worker,
@@ -357,4 +369,4 @@ def update_graph(tab, sol):
 # --------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run_server(debug=True, use_reloader=False) 
+    app.run_server(debug=True, use_reloader=False)
