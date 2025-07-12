@@ -74,6 +74,7 @@ class ORToolsSolver(CVRPTWSolver):
         self._define_time_constraints()
         self._define_capacity_constraints()
         self._define_time_window_constraints()
+        self._define_worker_constraints()
 
     def _define_time_constraints(self) -> None:
         """Define time dimension constraints."""
@@ -113,6 +114,36 @@ class ORToolsSolver(CVRPTWSolver):
         for node_index, (ready, due) in enumerate(zip(self.data["ready_times"], self.data["due_times"])):
             self.time_dimension.CumulVar(self.mgr.NodeToIndex(node_index)).SetRange(ready, due)
         self.constraints.append("time_windows")
+
+    def _define_worker_constraints(self) -> None:
+        """Define worker skill constraints using SetAllowedVehiclesForIndex."""
+        if self.routing is None or self.mgr is None or self.data is None:
+            raise ValueError("Solver must be initialized before defining constraints")
+
+        # Get worker skills and node requirements
+        workers = self.data.get("workers", [])
+        required_skills = self.data.get("required_skills", [])
+
+        if not workers or not required_skills:
+            return  # No worker constraints to apply
+
+        # For each node, determine which vehicles (workers) can visit it
+        for node_idx, node_skills in enumerate(required_skills):
+            if not node_skills:  # No skills required, all vehicles can visit
+                continue
+
+            # Find vehicles (workers) that have the required skills
+            allowed_vehicles = []
+            for vehicle_id, worker in enumerate(workers):
+                if node_skills.issubset(worker.skills):
+                    allowed_vehicles.append(vehicle_id)
+
+            # If no vehicles can handle this node, skip it (will be handled by solver)
+            if allowed_vehicles:
+                routing_idx = self.mgr.NodeToIndex(node_idx)
+                self.routing.SetAllowedVehiclesForIndex(allowed_vehicles, routing_idx)
+
+        self.constraints.append("worker_skills")
 
     def _configure_search_parameters(self) -> None:
         """Configure search parameters and strategies."""

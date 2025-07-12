@@ -1,11 +1,20 @@
 """Data models for CVRPTW solver
 ==================================
-Contains Node, Route dataclasses and utility functions.
+Contains Node, Route, Worker dataclasses and utility functions.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Set
 import numpy as np
+
+
+@dataclass
+class Worker:
+    """Worker with skills information."""
+
+    id: int
+    name: str
+    skills: Set[str]
 
 
 @dataclass
@@ -18,6 +27,11 @@ class Node:
     due: int  # latest time (minutes)
     service: int  # service duration (minutes)
     task: str = ""  # required skill/task
+    required_skills: Set[str] = None  # type: ignore
+
+    def __post_init__(self):
+        if self.required_skills is None:
+            self.required_skills = {self.task} if self.task else set()
 
 
 @dataclass
@@ -35,15 +49,17 @@ def euclidean_distance_matrix(coords: np.ndarray) -> np.ndarray:
     return np.linalg.norm(diff, axis=-1).round().astype(int)
 
 
-def create_data_model(nodes: List[Node], num_veh: int, cap: int) -> Dict:
-    """Create data model for CVRPTW solver."""
+def create_data_model(nodes: List[Node], workers: List[Worker], cap: int) -> Dict:
+    """Create data model for CVRPTW solver with worker constraints."""
     return {
         "distance_matrix": euclidean_distance_matrix(np.array([[n.x, n.y] for n in nodes])),
         "demands": [n.demand for n in nodes],
         "ready_times": [n.ready for n in nodes],
         "due_times": [n.due for n in nodes],
         "service_times": [n.service for n in nodes],
-        "vehicle_capacities": [cap] * num_veh,
-        "num_vehicles": num_veh,
+        "required_skills": [n.required_skills for n in nodes],
+        "vehicle_capacities": [cap] * len(workers),
+        "num_vehicles": len(workers),
+        "workers": workers,
         "depot": 0,
-    } 
+    }

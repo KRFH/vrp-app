@@ -192,16 +192,18 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
 
         # Create solver and solve
         solver = SolverFactory.create_solver(solver_name)
-        data_model = create_data_model(nodes, int(veh), int(cap))
-        routes = solver.solve(data_model)
 
-        # Assign workers
+        # Parse workers and create data model
         veh_count = int(veh)
         worker_info = parse_workers(workers or "", veh_count)
+        data_model = create_data_model(nodes, worker_info, int(cap))
+        routes = solver.solve(data_model)
+
+        # Assign workers (for display purposes)
         id2node = {n.idx: n for n in nodes}
         assignments = assign_workers(routes, id2node, worker_info)
 
-        worker_list = [w["name"] for w in worker_info]
+        worker_list = [w.name for w in worker_info]
 
         # Create summary
         summary_rows = []
@@ -227,7 +229,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
             "veh": int(veh),
             "cap": int(cap),
             "solver": solver_name,
-            "workers": [{"name": w["name"], "skills": sorted(list(w["skills"]))} for w in worker_info],
+            "workers": [{"name": w.name, "skills": sorted(list(w.skills))} for w in worker_info],
             "assignments": assignments,
             "routes": [
                 {
