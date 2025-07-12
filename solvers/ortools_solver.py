@@ -9,6 +9,7 @@ from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 from .base import CVRPTWSolver
 from models import Route
+from logging_config import log_solver_execution, log_solution_info
 
 
 class ORToolsSolver(CVRPTWSolver):
@@ -28,12 +29,25 @@ class ORToolsSolver(CVRPTWSolver):
         if self.data is None:
             raise ValueError("Data must be set before initializing solver")
 
+        log_solver_execution(
+            self.logger,
+            self.get_solver_name(),
+            "Creating RoutingIndexManager",
+            {
+                "num_nodes": len(self.data["distance_matrix"]),
+                "num_vehicles": self.data["num_vehicles"],
+                "depot": self.data["depot"],
+            },
+        )
+
         self.mgr = pywrapcp.RoutingIndexManager(
             len(self.data["distance_matrix"]), self.data["num_vehicles"], self.data["depot"]
         )
         self.routing = pywrapcp.RoutingModel(self.mgr)
         self.time_dimension = None
         self.capacity_dimension = None
+
+        log_solver_execution(self.logger, self.get_solver_name(), "Routing model initialized")
 
     def _define_variables(self) -> None:
         """Define decision variables for routing."""
@@ -44,6 +58,8 @@ class ORToolsSolver(CVRPTWSolver):
         routing = self.routing
         mgr = self.mgr
         data = self.data
+
+        log_solver_execution(self.logger, self.get_solver_name(), "Registering callbacks")
 
         # Distance callback for arc costs
         self.variables["distance_callback"] = routing.RegisterTransitCallback(
@@ -61,6 +77,10 @@ class ORToolsSolver(CVRPTWSolver):
             lambda i: data["demands"][mgr.IndexToNode(i)]
         )
 
+        log_solver_execution(
+            self.logger, self.get_solver_name(), "Callbacks registered", {"callbacks": list(self.variables.keys())}
+        )
+
     def _define_objective(self) -> None:
         """Define objective function to minimize total distance."""
         if self.routing is None:
@@ -69,12 +89,20 @@ class ORToolsSolver(CVRPTWSolver):
         self.routing.SetArcCostEvaluatorOfAllVehicles(self.variables["distance_callback"])
         self.objective = "minimize_total_distance"
 
+        log_solver_execution(self.logger, self.get_solver_name(), "Objective defined", {"objective": self.objective})
+
     def _define_constraints(self) -> None:
         """Define all problem constraints."""
+        log_solver_execution(self.logger, self.get_solver_name(), "Defining constraints")
+
         self._define_time_constraints()
         self._define_capacity_constraints()
         self._define_time_window_constraints()
         self._define_worker_constraints()
+
+        log_solver_execution(
+            self.logger, self.get_solver_name(), "Constraints defined", {"constraints": self.constraints}
+        )
 
     def _define_time_constraints(self) -> None:
         """Define time dimension constraints."""
@@ -154,14 +182,32 @@ class ORToolsSolver(CVRPTWSolver):
         params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
         params.time_limit.FromSeconds(15)
 
+        log_solver_execution(
+            self.logger,
+            self.get_solver_name(),
+            "Search parameters configured",
+            {
+                "first_solution_strategy": "PATH_CHEAPEST_ARC",
+                "local_search_metaheuristic": "GUIDED_LOCAL_SEARCH",
+                "time_limit_seconds": 15,
+            },
+        )
+
     def _solve_problem(self) -> Any:
         """Execute the solving process and return raw solution."""
         if self.routing is None or self.search_params is None:
             raise ValueError("Solver must be configured before solving")
 
+        log_solver_execution(self.logger, self.get_solver_name(), "Starting OR-Tools solve")
+
         solution = self.routing.SolveWithParameters(self.search_params)
         if not solution:
+            self.logger.error(f"[{self.get_solver_name()}] No feasible solution found")
             raise RuntimeError("No feasible solution found.")
+
+        log_solver_execution(
+            self.logger, self.get_solver_name(), "OR-Tools solve completed", {"solution_status": "FEASIBLE"}
+        )
         return solution
 
     def _extract_solution(self, raw_solution: Any) -> List[Route]:
@@ -199,7 +245,7 @@ class ORToolsSolver(CVRPTWSolver):
 
     def get_solution_info(self) -> Dict[str, Any]:
         """Get information about the solution and constraints."""
-        return {
+        solution_info = {
             "solver_name": self.get_solver_name(),
             "objective": self.objective,
             "constraints": self.constraints,
@@ -207,3 +253,8 @@ class ORToolsSolver(CVRPTWSolver):
             "search_strategy": "PATH_CHEAPEST_ARC + GUIDED_LOCAL_SEARCH",
             "time_limit_seconds": 15,
         }
+
+        # ソリューション情報をログに記録
+        log_solution_info(self.logger, self.get_solver_name(), solution_info)
+
+        return solution_info
