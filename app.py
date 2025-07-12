@@ -19,10 +19,15 @@ from dash import dash_table  # type: ignore
 from models import Node, Route, create_data_model
 from solver_factory import SolverFactory
 from worker_assignment import parse_workers, assign_workers
+from logging_config import setup_logging, get_logger
 
 # --------------------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------------------
+
+# ログ設定の初期化
+logger = setup_logging(level="INFO", log_to_file=True, log_to_console=True)
+app_logger = get_logger("VRPApp")
 
 SOLUTION_FILE = "data/solution_cache.json"
 try:
@@ -122,9 +127,15 @@ app.layout = dbc.Container(
                             children=[
                                 dcc.Tab(label="Map", value="map"),
                                 dcc.Tab(label="Gantt", value="gantt"),
+                                dcc.Tab(label="Logs", value="logs"),
                             ],
                         ),
-                        dcc.Loading(children=[dcc.Graph(id="graph"), dash_table.DataTable(id="summary")]),
+                        dcc.Loading(
+                            children=[
+                                html.Div(id="tab-output"),
+                                dash_table.DataTable(id="summary"),
+                            ]
+                        ),
                         dcc.Store(id="solution-store", data=INITIAL_SOLUTION),
                     ],
                     width=8,
@@ -160,10 +171,14 @@ def add_row(n_clicks, rows):
     State("cap", "value"),
     State("solver-select", "value"),
     State("workers", "value"),
+    State("tab", "value"),
     prevent_initial_call=True,
 )
-def compute_solution(_, rows, veh, cap, solver_name, workers):
+def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
     try:
+        app_logger.info(f"Starting solution computation with solver: {solver_name}")
+        app_logger.info(f"Parameters: vehicles={veh}, capacity={cap}, workers={workers}")
+
         # Parse input data
         df = pd.DataFrame(rows)
         numeric = ["id", "x", "y", "demand", "ready", "due", "service"]
@@ -174,6 +189,8 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
         if 0 not in df["id"].values:
             raise ValueError("Row with id 0 (depot) is required")
         df = df.sort_values("id")
+
+        app_logger.info(f"Input data parsed: {len(df)} nodes")
 
         # Create nodes
         nodes = [
@@ -191,13 +208,19 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
         ]
 
         # Create solver and solve
+        app_logger.info(f"Creating solver: {solver_name}")
         solver = SolverFactory.create_solver(solver_name)
 
         # Parse workers and create data model
         veh_count = int(veh)
         worker_info = parse_workers(workers or "", veh_count)
+        app_logger.info(f"Workers parsed: {len(worker_info)} workers")
+
         data_model = create_data_model(nodes, worker_info, int(cap))
+        app_logger.info("Data model created, starting solver execution")
+
         routes = solver.solve(data_model)
+        app_logger.info(f"Solver completed: {len(routes)} routes generated")
 
         # Assign workers (for display purposes)
         id2node = {n.idx: n for n in nodes}
@@ -247,14 +270,18 @@ def compute_solution(_, rows, veh, cap, solver_name, workers):
         with open(SOLUTION_FILE, "w") as f:
             json.dump(solution, f)
 
+        app_logger.info("Solution saved to cache file")
+        app_logger.info(f"Solution summary: {len(routes)} routes, total distance: {sum(r.distance for r in routes)}")
+
         return solution, summary_rows, summary_cols, f"Solved using {solver.get_solver_name()}"
 
     except Exception as e:
+        app_logger.error(f"Error during solution computation: {str(e)}")
         return dash.no_update, [], [], f"Error: {e}"
 
 
 @app.callback(
-    Output("graph", "figure"),
+    Output("tab-output", "children"),
     Input("tab", "value"),
     Input("solution-store", "data"),
     prevent_initial_call=True,
@@ -306,7 +333,10 @@ def update_graph(tab, sol):
                 )
             )
         fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), xaxis_title="X", yaxis_title="Y", height=500)
-    else:
+
+        return html.Div(dcc.Graph(figure=fig))
+
+    elif tab == "gantt":
         gantt_data = []
         for r in routes:
             for idx, nid in enumerate(r.path[:-1]):
@@ -363,7 +393,54 @@ def update_graph(tab, sol):
         else:
             fig = go.Figure()
 
-    return fig
+        return html.Div(dcc.Graph(figure=fig))
+
+    elif tab == "logs":
+        try:
+            # ログファイルを読み込む
+            from logging_config import LOG_FILE
+            import os
+
+            if os.path.exists(LOG_FILE):
+                with open(LOG_FILE, "r", encoding="utf-8") as f:
+                    log_content = f.read()
+            else:
+                log_content = "ログファイルがまだ作成されていません。"
+
+            # ログ内容をHTMLで表示
+            return html.Div(
+                [
+                    html.H4("実行ログ", className="mb-3"),
+                    html.Div(
+                        [
+                            html.Pre(
+                                log_content,
+                                style={
+                                    "fontFamily": "monospace",
+                                    "fontSize": "12px",
+                                    "backgroundColor": "#f8f9fa",
+                                    "border": "1px solid #dee2e6",
+                                    "borderRadius": "4px",
+                                    "padding": "15px",
+                                    "overflow": "auto",
+                                    "maxHeight": "500px",
+                                    "whiteSpace": "pre-wrap",
+                                    "wordWrap": "break-word",
+                                },
+                            )
+                        ]
+                    ),
+                ]
+            )
+
+        except Exception as e:
+            app_logger.error(f"Error reading log file: {str(e)}")
+            return html.Div(
+                [
+                    html.H4("ログ表示エラー", className="text-danger"),
+                    html.P(f"ログファイルの読み込みエラー: {str(e)}", className="text-danger"),
+                ]
+            )
 
 
 # --------------------------------------------------------------------------------------
