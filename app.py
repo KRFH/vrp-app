@@ -57,7 +57,11 @@ COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "d
 # Dash UI
 # --------------------------------------------------------------------------------------
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    suppress_callback_exceptions=True,
+)
 app.title = "CVRPTW Solver (Modular)"
 
 app.layout = dbc.Container(
