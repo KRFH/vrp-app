@@ -9,6 +9,7 @@ The interface lets you edit customer nodes in a table, configure the number of v
 - Editable node table
 - Map view of routes and nodes
 - 24‑hour Gantt view of each vehicle's schedule
+- Custom route visualisation by selecting nodes in order
 - Cached solutions saved to `solution_cache.json`
 - Comprehensive logging system for solver execution tracking
 - Log viewer in the UI to monitor solver performance and execution details

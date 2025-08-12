@@ -127,6 +127,7 @@ app.layout = dbc.Container(
                             children=[
                                 dcc.Tab(label="Map", value="map"),
                                 dcc.Tab(label="Gantt", value="gantt"),
+                                dcc.Tab(label="Route", value="route"),
                                 dcc.Tab(label="Logs", value="logs"),
                             ],
                         ),
@@ -395,6 +396,41 @@ def update_graph(tab, sol):
 
         return html.Div(dcc.Graph(figure=fig))
 
+    elif tab == "route":
+        options = [
+            {"label": f"Node {n['id']}", "value": int(n["id"])} for n in sol["nodes"]
+        ]
+        fig = go.Figure()
+        if options:
+            fig.add_trace(
+                go.Scatter(
+                    x=df.x,
+                    y=df.y,
+                    mode="markers+text",
+                    text=df.id,
+                    textposition="top center",
+                    marker=dict(size=10),
+                    name="Nodes",
+                )
+            )
+        fig.update_layout(
+            margin=dict(l=20, r=20, t=30, b=20),
+            xaxis_title="X",
+            yaxis_title="Y",
+            height=500,
+        )
+        return html.Div(
+            [
+                dcc.Dropdown(
+                    id="node-select",
+                    options=options,
+                    multi=True,
+                    placeholder="Select nodes in order",
+                ),
+                dcc.Graph(id="route-graph", figure=fig),
+            ]
+        )
+
     elif tab == "logs":
         try:
             # ログファイルを読み込む
@@ -441,6 +477,51 @@ def update_graph(tab, sol):
                     html.P(f"ログファイルの読み込みエラー: {str(e)}", className="text-danger"),
                 ]
             )
+
+
+@app.callback(
+    Output("route-graph", "figure"),
+    Input("node-select", "value"),
+    Input("solution-store", "data"),
+    prevent_initial_call=True,
+)
+def update_route(selected_nodes, sol):
+    if not sol:
+        return go.Figure()
+    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=df.x,
+            y=df.y,
+            mode="markers+text",
+            text=df.id,
+            textposition="top center",
+            marker=dict(size=10),
+            name="Nodes",
+        )
+    )
+    if selected_nodes and len(selected_nodes) >= 2:
+        id2node = {n["id"]: n for n in sol["nodes"]}
+        xs = [id2node[nid]["x"] for nid in selected_nodes]
+        ys = [id2node[nid]["y"] for nid in selected_nodes]
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="lines+markers",
+                marker=dict(size=8),
+                line=dict(width=2, color="black"),
+                name="Selected route",
+            )
+        )
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis_title="X",
+        yaxis_title="Y",
+        height=500,
+    )
+    return fig
 
 
 # --------------------------------------------------------------------------------------
