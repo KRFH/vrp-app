@@ -15,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html
 from dash import dash_table  # type: ignore
+from dash.dependencies import ALL
 
 from models import Node, Route, create_data_model
 from solver_factory import SolverFactory
@@ -57,7 +58,11 @@ COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "d
 # Dash UI
 # --------------------------------------------------------------------------------------
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    suppress_callback_exceptions=True,
+)
 app.title = "CVRPTW Solver (Modular)"
 
 app.layout = dbc.Container(
@@ -127,6 +132,7 @@ app.layout = dbc.Container(
                             children=[
                                 dcc.Tab(label="Map", value="map"),
                                 dcc.Tab(label="Gantt", value="gantt"),
+                                dcc.Tab(label="Route", value="route"),
                                 dcc.Tab(label="Logs", value="logs"),
                             ],
                         ),
@@ -395,6 +401,44 @@ def update_graph(tab, sol):
 
         return html.Div(dcc.Graph(figure=fig))
 
+    elif tab == "route":
+        options = [{"label": f"Node {n['id']}", "value": int(n["id"])} for n in sol["nodes"]]
+        fig = go.Figure()
+        if options:
+            fig.add_trace(
+                go.Scatter(
+                    x=df.x,
+                    y=df.y,
+                    mode="markers+text",
+                    text=df.id,
+                    textposition="top center",
+                    marker=dict(size=10),
+                    name="Nodes",
+                )
+            )
+        fig.update_layout(
+            margin=dict(l=20, r=20, t=30, b=20),
+            xaxis_title="X",
+            yaxis_title="Y",
+            height=500,
+        )
+        first_dropdown = html.Div(
+            dcc.Dropdown(
+                id={"type": "route-select", "index": 0},
+                options=options,
+                multi=True,
+                placeholder="Select nodes in order",
+            ),
+            style={"marginBottom": "0.5rem"},
+        )
+        return html.Div(
+            [
+                html.Div(id="route-dropdown-container", children=[first_dropdown]),
+                dbc.Button("Add Route", id="add-route", size="sm", color="secondary", className="mb-2"),
+                dcc.Graph(id="route-graph", figure=fig),
+            ]
+        )
+
     elif tab == "logs":
         try:
             # ログファイルを読み込む
@@ -441,6 +485,80 @@ def update_graph(tab, sol):
                     html.P(f"ログファイルの読み込みエラー: {str(e)}", className="text-danger"),
                 ]
             )
+
+
+@app.callback(
+    Output("route-dropdown-container", "children"),
+    Input("add-route", "n_clicks"),
+    State("route-dropdown-container", "children"),
+    State("solution-store", "data"),
+    prevent_initial_call=True,
+)
+def add_route_dropdown(n_clicks, children, sol):
+    if not sol:
+        return children
+    options = [{"label": f"Node {n['id']}", "value": int(n["id"])} for n in sol["nodes"]]
+    children = children or []
+    idx = len(children)
+    children.append(
+        html.Div(
+            dcc.Dropdown(
+                id={"type": "route-select", "index": idx},
+                options=options,
+                multi=True,
+                placeholder="Select nodes in order",
+            ),
+            style={"marginBottom": "0.5rem"},
+        )
+    )
+    return children
+
+
+@app.callback(
+    Output("route-graph", "figure"),
+    Input({"type": "route-select", "index": ALL}, "value"),
+    State("solution-store", "data"),
+    prevent_initial_call=True,
+)
+def update_routes(selected_nodes_list, sol):
+    if not sol:
+        return go.Figure()
+    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=df.x,
+            y=df.y,
+            mode="markers+text",
+            text=df.id,
+            textposition="top center",
+            marker=dict(size=10),
+            name="Nodes",
+        )
+    )
+    id2node = {n["id"]: n for n in sol["nodes"]}
+    palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
+    for idx, selected in enumerate(selected_nodes_list or []):
+        if selected and len(selected) >= 2:
+            xs = [id2node[nid]["x"] for nid in selected]
+            ys = [id2node[nid]["y"] for nid in selected]
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=ys,
+                    mode="lines+markers",
+                    marker=dict(size=8),
+                    line=dict(width=2, color=palette[idx % len(palette)]),
+                    name=f"Route {idx + 1}",
+                )
+            )
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis_title="X",
+        yaxis_title="Y",
+        height=500,
+    )
+    return fig
 
 
 # --------------------------------------------------------------------------------------
