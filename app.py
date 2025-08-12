@@ -15,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html
 from dash import dash_table  # type: ignore
+from dash.dash_table import Format
 from dash.dependencies import ALL
 
 from models import Node, Route, create_data_model
@@ -52,7 +53,26 @@ DEFAULT_ROWS = (
     ]
 )
 
-COLS_CFG = [{"id": c, "name": c} for c in ["id", "lat", "lon", "demand", "ready", "due", "service", "task"]]
+COLS_CFG = [
+    {"id": "id", "name": "id", "type": "numeric"},
+    {
+        "id": "lat",
+        "name": "lat",
+        "type": "numeric",
+        "format": Format.Format(precision=6, scheme=Format.Scheme.fixed),
+    },
+    {
+        "id": "lon",
+        "name": "lon",
+        "type": "numeric",
+        "format": Format.Format(precision=6, scheme=Format.Scheme.fixed),
+    },
+    {"id": "demand", "name": "demand", "type": "numeric"},
+    {"id": "ready", "name": "ready", "type": "numeric"},
+    {"id": "due", "name": "due", "type": "numeric"},
+    {"id": "service", "name": "service", "type": "numeric"},
+    {"id": "task", "name": "task"},
+]
 
 # --------------------------------------------------------------------------------------
 # Dash UI
@@ -294,7 +314,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
 )
 def update_graph(tab, sol):
     if not sol:
-        return go.Figure()
+        return html.Div(dcc.Graph(figure=go.Figure()))
 
     df = pd.DataFrame(sol["nodes"]).sort_values("id")
     nodes = [
