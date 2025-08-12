@@ -18,12 +18,12 @@ def test_worker_constraints():
 
     # Create test nodes with different skill requirements
     nodes = [
-        Node(0, 50, 50, 0, 0, 1440, 0, "depot"),  # depot
-        Node(1, 60, 20, 10, 300, 720, 300, "delivery", {"delivery"}),
-        Node(2, 95, 80, 15, 480, 900, 300, "repair", {"repair"}),
-        Node(3, 25, 30, 8, 540, 1020, 200, "delivery", {"delivery"}),
-        Node(4, 10, 70, 12, 600, 1080, 200, "maintenance", {"maintenance"}),
-        Node(5, 80, 40, 7, 360, 840, 150, "delivery", {"delivery"}),
+        Node(0, 35.681236, 139.767125, 0, 0, 1440, 0, "depot"),  # depot (Tokyo Station)
+        Node(1, 35.689487, 139.691711, 10, 300, 720, 300, "delivery", {"delivery"}),
+        Node(2, 35.658034, 139.751599, 15, 480, 900, 300, "repair", {"repair"}),
+        Node(3, 35.673343, 139.710388, 8, 540, 1020, 200, "delivery", {"delivery"}),
+        Node(4, 35.652832, 139.839478, 12, 600, 1080, 200, "maintenance", {"maintenance"}),
+        Node(5, 35.701298, 139.579506, 7, 360, 840, 150, "delivery", {"delivery"}),
     ]
 
     # Create workers with different skills

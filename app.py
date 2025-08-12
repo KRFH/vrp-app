@@ -41,18 +41,18 @@ DEFAULT_ROWS = (
     INITIAL_SOLUTION["nodes"]
     if INITIAL_SOLUTION
     else [
-        {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0, "task": "depot"},
-        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 300, "task": "delivery"},
-        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 300, "task": "repair"},
-        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 200, "task": "delivery"},
-        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 200, "task": "maintenance"},
-        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 150, "task": "delivery"},
-        {"id": 6, "x": 10, "y": 10, "demand": 7, "ready": 300, "due": 840, "service": 150, "task": "repair"},
-        {"id": 7, "x": 50, "y": 80, "demand": 7, "ready": 500, "due": 900, "service": 150, "task": "maintenance"},
+        {"id": 0, "lat": 35.681236, "lon": 139.767125, "demand": 0, "ready": 0, "due": 1440, "service": 0, "task": "depot"},
+        {"id": 1, "lat": 35.689487, "lon": 139.691711, "demand": 10, "ready": 300, "due": 720, "service": 300, "task": "delivery"},
+        {"id": 2, "lat": 35.658034, "lon": 139.751599, "demand": 15, "ready": 480, "due": 900, "service": 300, "task": "repair"},
+        {"id": 3, "lat": 35.673343, "lon": 139.710388, "demand": 8, "ready": 540, "due": 1020, "service": 200, "task": "delivery"},
+        {"id": 4, "lat": 35.652832, "lon": 139.839478, "demand": 12, "ready": 600, "due": 1080, "service": 200, "task": "maintenance"},
+        {"id": 5, "lat": 35.701298, "lon": 139.579506, "demand": 7, "ready": 360, "due": 840, "service": 150, "task": "delivery"},
+        {"id": 6, "lat": 35.733953, "lon": 139.731992, "demand": 7, "ready": 300, "due": 840, "service": 150, "task": "repair"},
+        {"id": 7, "lat": 35.710063, "lon": 139.8107, "demand": 7, "ready": 500, "due": 900, "service": 150, "task": "maintenance"},
     ]
 )
 
-COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "due", "service", "task"]]
+COLS_CFG = [{"id": c, "name": c} for c in ["id", "lat", "lon", "demand", "ready", "due", "service", "task"]]
 
 # --------------------------------------------------------------------------------------
 # Dash UI
@@ -162,7 +162,7 @@ app.layout = dbc.Container(
 def add_row(n_clicks, rows):
     if n_clicks:
         next_id = max(r["id"] for r in rows) + 1 if rows else 1
-        rows.append({"id": next_id, "x": 0, "y": 0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""})
+        rows.append({"id": next_id, "lat": 35.0, "lon": 139.0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""})
     return rows
 
 
@@ -187,7 +187,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
 
         # Parse input data
         df = pd.DataFrame(rows)
-        numeric = ["id", "x", "y", "demand", "ready", "due", "service"]
+        numeric = ["id", "lat", "lon", "demand", "ready", "due", "service"]
         for col in numeric:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         if df[numeric].isnull().any().any():
@@ -202,8 +202,8 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
         nodes = [
             Node(
                 int(r.id),
-                float(r.x),
-                float(r.y),
+                float(r.lat),
+                float(r.lon),
                 int(r.demand),
                 int(r.ready),
                 int(r.due),
@@ -298,7 +298,7 @@ def update_graph(tab, sol):
 
     df = pd.DataFrame(sol["nodes"]).sort_values("id")
     nodes = [
-        Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", ""))
+        Node(r.id, r.lat, r.lon, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", ""))
         for r in df.itertuples()
     ]
     id2node: Dict[int, Node] = {n.idx: n for n in nodes}
@@ -309,9 +309,9 @@ def update_graph(tab, sol):
     if tab == "map":
         fig = go.Figure()
         fig.add_trace(
-            go.Scatter(
-                x=df.x,
-                y=df.y,
+            go.Scattermapbox(
+                lat=df.lat,
+                lon=df.lon,
                 mode="markers+text",
                 text=df.id,
                 textposition="top center",
@@ -326,19 +326,25 @@ def update_graph(tab, sol):
                 worker = (
                     worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
                 )
-            xs = [id2node[nid].x for nid in r.path]
-            ys = [id2node[nid].y for nid in r.path]
+            lats = [id2node[nid].lat for nid in r.path]
+            lons = [id2node[nid].lon for nid in r.path]
             fig.add_trace(
-                go.Scatter(
-                    x=xs,
-                    y=ys,
+                go.Scattermapbox(
+                    lat=lats,
+                    lon=lons,
                     mode="lines+markers",
                     marker=dict(size=6),
                     line=dict(width=2, color=palette[r.vehicle_id % len(palette)]),
                     name=f"{worker} (Veh {r.vehicle_id}, d={r.distance})",
                 )
             )
-        fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), xaxis_title="X", yaxis_title="Y", height=500)
+        fig.update_layout(
+            mapbox_style="open-street-map",
+            mapbox_zoom=10,
+            mapbox_center={"lat": 35.681236, "lon": 139.767125},
+            margin=dict(l=20, r=20, t=30, b=20),
+            height=500,
+        )
 
         return html.Div(dcc.Graph(figure=fig))
 
@@ -406,9 +412,9 @@ def update_graph(tab, sol):
         fig = go.Figure()
         if options:
             fig.add_trace(
-                go.Scatter(
-                    x=df.x,
-                    y=df.y,
+                go.Scattermapbox(
+                    lat=df.lat,
+                    lon=df.lon,
                     mode="markers+text",
                     text=df.id,
                     textposition="top center",
@@ -417,9 +423,10 @@ def update_graph(tab, sol):
                 )
             )
         fig.update_layout(
+            mapbox_style="open-street-map",
+            mapbox_zoom=10,
+            mapbox_center={"lat": 35.681236, "lon": 139.767125},
             margin=dict(l=20, r=20, t=30, b=20),
-            xaxis_title="X",
-            yaxis_title="Y",
             height=500,
         )
         first_dropdown = html.Div(
@@ -526,9 +533,9 @@ def update_routes(selected_nodes_list, sol):
     df = pd.DataFrame(sol["nodes"]).sort_values("id")
     fig = go.Figure()
     fig.add_trace(
-        go.Scatter(
-            x=df.x,
-            y=df.y,
+        go.Scattermapbox(
+            lat=df.lat,
+            lon=df.lon,
             mode="markers+text",
             text=df.id,
             textposition="top center",
@@ -540,12 +547,12 @@ def update_routes(selected_nodes_list, sol):
     palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
     for idx, selected in enumerate(selected_nodes_list or []):
         if selected and len(selected) >= 2:
-            xs = [id2node[nid]["x"] for nid in selected]
-            ys = [id2node[nid]["y"] for nid in selected]
+            lats = [id2node[nid]["lat"] for nid in selected]
+            lons = [id2node[nid]["lon"] for nid in selected]
             fig.add_trace(
-                go.Scatter(
-                    x=xs,
-                    y=ys,
+                go.Scattermapbox(
+                    lat=lats,
+                    lon=lons,
                     mode="lines+markers",
                     marker=dict(size=8),
                     line=dict(width=2, color=palette[idx % len(palette)]),
@@ -553,9 +560,10 @@ def update_routes(selected_nodes_list, sol):
                 )
             )
     fig.update_layout(
+        mapbox_style="open-street-map",
+        mapbox_zoom=10,
+        mapbox_center={"lat": 35.681236, "lon": 139.767125},
         margin=dict(l=20, r=20, t=30, b=20),
-        xaxis_title="X",
-        yaxis_title="Y",
         height=500,
     )
     return fig
