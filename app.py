@@ -23,6 +23,14 @@ from solver_factory import SolverFactory
 from worker_assignment import parse_workers, assign_workers
 from logging_config import setup_logging, get_logger
 
+
+def normalize_node_df(rows):
+    """Return DataFrame with lat/lon columns, accepting old x/y fields."""
+    df = pd.DataFrame(rows)
+    if "lat" not in df.columns and "x" in df.columns:
+        df = df.rename(columns={"x": "lat", "y": "lon"})
+    return df.sort_values("id")
+
 # --------------------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------------------
@@ -35,6 +43,9 @@ SOLUTION_FILE = "data/solution_cache.json"
 try:
     with open(SOLUTION_FILE) as f:
         INITIAL_SOLUTION = json.load(f)
+        if "nodes" in INITIAL_SOLUTION:
+            df = normalize_node_df(INITIAL_SOLUTION["nodes"])
+            INITIAL_SOLUTION["nodes"] = df.to_dict("records")
 except FileNotFoundError:
     INITIAL_SOLUTION = None
 
@@ -206,7 +217,7 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
         app_logger.info(f"Parameters: vehicles={veh}, capacity={cap}, workers={workers}")
 
         # Parse input data
-        df = pd.DataFrame(rows)
+        df = normalize_node_df(rows)
         numeric = ["id", "lat", "lon", "demand", "ready", "due", "service"]
         for col in numeric:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -316,7 +327,7 @@ def update_graph(tab, sol):
     if not sol:
         return html.Div(dcc.Graph(figure=go.Figure()))
 
-    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+    df = normalize_node_df(sol["nodes"])
     nodes = [
         Node(r.id, r.lat, r.lon, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", ""))
         for r in df.itertuples()
@@ -550,7 +561,7 @@ def add_route_dropdown(n_clicks, children, sol):
 def update_routes(selected_nodes_list, sol):
     if not sol:
         return go.Figure()
-    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+    df = normalize_node_df(sol["nodes"])
     fig = go.Figure()
     fig.add_trace(
         go.Scattermapbox(
@@ -563,7 +574,7 @@ def update_routes(selected_nodes_list, sol):
             name="Nodes",
         )
     )
-    id2node = {n["id"]: n for n in sol["nodes"]}
+    id2node = df.set_index("id").to_dict("index")
     palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
     for idx, selected in enumerate(selected_nodes_list or []):
         if selected and len(selected) >= 2:
