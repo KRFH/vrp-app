@@ -20,8 +20,8 @@ class Worker:
 @dataclass
 class Node:
     idx: int
-    x: float
-    y: float
+    lat: float
+    lon: float
     demand: int
     ready: int  # earliest time (minutes)
     due: int  # latest time (minutes)
@@ -52,7 +52,7 @@ def euclidean_distance_matrix(coords: np.ndarray) -> np.ndarray:
 def create_data_model(nodes: List[Node], workers: List[Worker], cap: int) -> Dict:
     """Create data model for CVRPTW solver with worker constraints."""
     return {
-        "distance_matrix": euclidean_distance_matrix(np.array([[n.x, n.y] for n in nodes])),
+        "distance_matrix": euclidean_distance_matrix(np.array([[n.lon, n.lat] for n in nodes])),
         "demands": [n.demand for n in nodes],
         "ready_times": [n.ready for n in nodes],
         "due_times": [n.due for n in nodes],

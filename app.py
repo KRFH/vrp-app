@@ -15,12 +15,22 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html
 from dash import dash_table  # type: ignore
+from dash.dash_table import Format
 from dash.dependencies import ALL
 
 from models import Node, Route, create_data_model
 from solver_factory import SolverFactory
 from worker_assignment import parse_workers, assign_workers
 from logging_config import setup_logging, get_logger
+
+
+def normalize_node_df(rows):
+    """Return DataFrame with lat/lon columns, accepting old x/y fields."""
+    df = pd.DataFrame(rows)
+    if "lat" not in df.columns and "x" in df.columns:
+        df = df.rename(columns={"x": "lat", "y": "lon"})
+    return df.sort_values("id")
+
 
 # --------------------------------------------------------------------------------------
 # Configuration
@@ -34,6 +44,9 @@ SOLUTION_FILE = "data/solution_cache.json"
 try:
     with open(SOLUTION_FILE) as f:
         INITIAL_SOLUTION = json.load(f)
+        if "nodes" in INITIAL_SOLUTION:
+            df = normalize_node_df(INITIAL_SOLUTION["nodes"])
+            INITIAL_SOLUTION["nodes"] = df.to_dict("records")
 except FileNotFoundError:
     INITIAL_SOLUTION = None
 
@@ -41,18 +54,109 @@ DEFAULT_ROWS = (
     INITIAL_SOLUTION["nodes"]
     if INITIAL_SOLUTION
     else [
-        {"id": 0, "x": 50, "y": 50, "demand": 0, "ready": 0, "due": 1440, "service": 0, "task": "depot"},
-        {"id": 1, "x": 60, "y": 20, "demand": 10, "ready": 300, "due": 720, "service": 300, "task": "delivery"},
-        {"id": 2, "x": 95, "y": 80, "demand": 15, "ready": 480, "due": 900, "service": 300, "task": "repair"},
-        {"id": 3, "x": 25, "y": 30, "demand": 8, "ready": 540, "due": 1020, "service": 200, "task": "delivery"},
-        {"id": 4, "x": 10, "y": 70, "demand": 12, "ready": 600, "due": 1080, "service": 200, "task": "maintenance"},
-        {"id": 5, "x": 80, "y": 40, "demand": 7, "ready": 360, "due": 840, "service": 150, "task": "delivery"},
-        {"id": 6, "x": 10, "y": 10, "demand": 7, "ready": 300, "due": 840, "service": 150, "task": "repair"},
-        {"id": 7, "x": 50, "y": 80, "demand": 7, "ready": 500, "due": 900, "service": 150, "task": "maintenance"},
+        {
+            "id": 0,
+            "lat": 35.681236,
+            "lon": 139.767125,
+            "demand": 0,
+            "ready": 0,
+            "due": 1440,
+            "service": 0,
+            "task": "depot",
+        },
+        {
+            "id": 1,
+            "lat": 35.689487,
+            "lon": 139.691711,
+            "demand": 10,
+            "ready": 300,
+            "due": 720,
+            "service": 300,
+            "task": "delivery",
+        },
+        {
+            "id": 2,
+            "lat": 35.658034,
+            "lon": 139.751599,
+            "demand": 15,
+            "ready": 480,
+            "due": 900,
+            "service": 300,
+            "task": "repair",
+        },
+        {
+            "id": 3,
+            "lat": 35.673343,
+            "lon": 139.710388,
+            "demand": 8,
+            "ready": 540,
+            "due": 1020,
+            "service": 200,
+            "task": "delivery",
+        },
+        {
+            "id": 4,
+            "lat": 35.652832,
+            "lon": 139.839478,
+            "demand": 12,
+            "ready": 600,
+            "due": 1080,
+            "service": 200,
+            "task": "maintenance",
+        },
+        {
+            "id": 5,
+            "lat": 35.601298,
+            "lon": 139.579506,
+            "demand": 7,
+            "ready": 360,
+            "due": 840,
+            "service": 150,
+            "task": "delivery",
+        },
+        {
+            "id": 6,
+            "lat": 35.733953,
+            "lon": 139.731992,
+            "demand": 7,
+            "ready": 300,
+            "due": 840,
+            "service": 150,
+            "task": "repair",
+        },
+        {
+            "id": 7,
+            "lat": 35.710063,
+            "lon": 139.8107,
+            "demand": 7,
+            "ready": 500,
+            "due": 900,
+            "service": 150,
+            "task": "maintenance",
+        },
     ]
 )
 
-COLS_CFG = [{"id": c, "name": c} for c in ["id", "x", "y", "demand", "ready", "due", "service", "task"]]
+COLS_CFG = [
+    {"id": "id", "name": "id", "type": "numeric"},
+    {
+        "id": "lat",
+        "name": "lat",
+        "type": "numeric",
+        "format": Format.Format(precision=6, scheme=Format.Scheme.fixed),
+    },
+    {
+        "id": "lon",
+        "name": "lon",
+        "type": "numeric",
+        "format": Format.Format(precision=6, scheme=Format.Scheme.fixed),
+    },
+    {"id": "demand", "name": "demand", "type": "numeric"},
+    {"id": "ready", "name": "ready", "type": "numeric"},
+    {"id": "due", "name": "due", "type": "numeric"},
+    {"id": "service", "name": "service", "type": "numeric"},
+    {"id": "task", "name": "task"},
+]
 
 # --------------------------------------------------------------------------------------
 # Dash UI
@@ -162,7 +266,9 @@ app.layout = dbc.Container(
 def add_row(n_clicks, rows):
     if n_clicks:
         next_id = max(r["id"] for r in rows) + 1 if rows else 1
-        rows.append({"id": next_id, "x": 0, "y": 0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""})
+        rows.append(
+            {"id": next_id, "lat": 35.0, "lon": 139.0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""}
+        )
     return rows
 
 
@@ -186,8 +292,8 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
         app_logger.info(f"Parameters: vehicles={veh}, capacity={cap}, workers={workers}")
 
         # Parse input data
-        df = pd.DataFrame(rows)
-        numeric = ["id", "x", "y", "demand", "ready", "due", "service"]
+        df = normalize_node_df(rows)
+        numeric = ["id", "lat", "lon", "demand", "ready", "due", "service"]
         for col in numeric:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         if df[numeric].isnull().any().any():
@@ -202,8 +308,8 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
         nodes = [
             Node(
                 int(r.id),
-                float(r.x),
-                float(r.y),
+                float(r.lat),
+                float(r.lon),
                 int(r.demand),
                 int(r.ready),
                 int(r.due),
@@ -294,11 +400,11 @@ def compute_solution(_, rows, veh, cap, solver_name, workers, current_tab):
 )
 def update_graph(tab, sol):
     if not sol:
-        return go.Figure()
+        return html.Div(dcc.Graph(figure=go.Figure()))
 
-    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+    df = normalize_node_df(sol["nodes"])
     nodes = [
-        Node(r.id, r.x, r.y, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", ""))
+        Node(r.id, r.lat, r.lon, int(r.demand), int(r.ready), int(r.due), int(r.service), getattr(r, "task", ""))
         for r in df.itertuples()
     ]
     id2node: Dict[int, Node] = {n.idx: n for n in nodes}
@@ -308,17 +414,21 @@ def update_graph(tab, sol):
 
     if tab == "map":
         fig = go.Figure()
+
+        # ノード（点）
         fig.add_trace(
-            go.Scatter(
-                x=df.x,
-                y=df.y,
+            go.Scattermap(
+                lat=df.lat,
+                lon=df.lon,
                 mode="markers+text",
-                text=df.id,
+                text=df.id.astype(str),
                 textposition="top center",
                 marker=dict(size=10),
                 name="Nodes",
             )
         )
+
+        # ルート（線＋点）
         palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
         for r in routes:
             worker = assignments.get(r.vehicle_id)
@@ -326,19 +436,36 @@ def update_graph(tab, sol):
                 worker = (
                     worker_info[r.vehicle_id]["name"] if r.vehicle_id < len(worker_info) else f"Worker {r.vehicle_id}"
                 )
-            xs = [id2node[nid].x for nid in r.path]
-            ys = [id2node[nid].y for nid in r.path]
+            lats = [id2node[nid].lat for nid in r.path]
+            lons = [id2node[nid].lon for nid in r.path]
+
             fig.add_trace(
-                go.Scatter(
-                    x=xs,
-                    y=ys,
+                go.Scattermap(
+                    lat=lats,
+                    lon=lons,
                     mode="lines+markers",
                     marker=dict(size=6),
-                    line=dict(width=2, color=palette[r.vehicle_id % len(palette)]),
+                    line=dict(width=3),  # 色は下の update_traces で一括設定も可
                     name=f"{worker} (Veh {r.vehicle_id}, d={r.distance})",
+                    # 個別に色を付けたい場合は line=dict(color=palette[r.vehicle_id % len(palette)], width=3)
                 )
             )
-        fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), xaxis_title="X", yaxis_title="Y", height=500)
+
+        # MapLibre 用レイアウト（mapbox_* ではなく map を使う）
+        fig.update_layout(
+            map=dict(
+                style="open-street-map",  # 無料スタイル
+                zoom=10,
+                center=dict(lat=35.681236, lon=139.767125),
+            ),
+            margin=dict(l=20, r=20, t=30, b=20),
+            height=500,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+
+        # ルートごとに色を当てたいとき（任意）:
+        for i, r in enumerate(routes, start=1):  # 0番目はNodesなので start=1
+            fig.data[i].line.color = palette[r.vehicle_id % len(palette)]
 
         return html.Div(dcc.Graph(figure=fig))
 
@@ -402,26 +529,38 @@ def update_graph(tab, sol):
         return html.Div(dcc.Graph(figure=fig))
 
     elif tab == "route":
-        options = [{"label": f"Node {n['id']}", "value": int(n["id"])} for n in sol["nodes"]]
+        # ★ sol から毎回 df を作る
+        df = normalize_node_df(sol["nodes"])
+        options = [{"label": f"Node {int(n['id'])}", "value": int(n["id"])} for n in sol["nodes"]]
+
         fig = go.Figure()
-        if options:
+        if not df.empty:
             fig.add_trace(
-                go.Scatter(
-                    x=df.x,
-                    y=df.y,
+                go.Scattermap(
+                    lat=df.lat,
+                    lon=df.lon,
                     mode="markers+text",
-                    text=df.id,
+                    text=df.id.astype(str),  # ★ 表示は文字列
                     textposition="top center",
                     marker=dict(size=10),
                     name="Nodes",
                 )
             )
+
+        # 中心はデータの平均に寄せると親切（任意）
+        center_lat = float(df.lat.mean()) if not df.empty else 35.681236
+        center_lon = float(df.lon.mean()) if not df.empty else 139.767125
+
         fig.update_layout(
+            map=dict(
+                style="open-street-map",
+                zoom=10,
+                center=dict(lat=center_lat, lon=center_lon),
+            ),
             margin=dict(l=20, r=20, t=30, b=20),
-            xaxis_title="X",
-            yaxis_title="Y",
             height=500,
         )
+
         first_dropdown = html.Div(
             dcc.Dropdown(
                 id={"type": "route-select", "index": 0},
@@ -431,6 +570,7 @@ def update_graph(tab, sol):
             ),
             style={"marginBottom": "0.5rem"},
         )
+
         return html.Div(
             [
                 html.Div(id="route-dropdown-container", children=[first_dropdown]),
@@ -523,39 +663,54 @@ def add_route_dropdown(n_clicks, children, sol):
 def update_routes(selected_nodes_list, sol):
     if not sol:
         return go.Figure()
-    df = pd.DataFrame(sol["nodes"]).sort_values("id")
+
+    df = normalize_node_df(sol["nodes"])
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=df.x,
-            y=df.y,
-            mode="markers+text",
-            text=df.id,
-            textposition="top center",
-            marker=dict(size=10),
-            name="Nodes",
+
+    if not df.empty:
+        fig.add_trace(
+            go.Scattermap(
+                lat=df.lat,
+                lon=df.lon,
+                mode="markers+text",
+                text=df.id.astype(str),  # ★ 表示は文字列
+                textposition="top center",
+                marker=dict(size=10),
+                name="Nodes",
+            )
         )
-    )
-    id2node = {n["id"]: n for n in sol["nodes"]}
+
+    # ★ id を int キーに（Dropdown values と型を合わせる）
+    id2node = df.set_index(df["id"].astype(int)).to_dict("index")
+
     palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
     for idx, selected in enumerate(selected_nodes_list or []):
         if selected and len(selected) >= 2:
-            xs = [id2node[nid]["x"] for nid in selected]
-            ys = [id2node[nid]["y"] for nid in selected]
-            fig.add_trace(
-                go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode="lines+markers",
-                    marker=dict(size=8),
-                    line=dict(width=2, color=palette[idx % len(palette)]),
-                    name=f"Route {idx + 1}",
+            # ★ 値は int 前提（念のためキャスト）
+            seq = [int(nid) for nid in selected if int(nid) in id2node]
+            if len(seq) >= 2:
+                lats = [id2node[n]["lat"] for n in seq]
+                lons = [id2node[n]["lon"] for n in seq]
+                fig.add_trace(
+                    go.Scattermap(
+                        lat=lats,
+                        lon=lons,
+                        mode="lines+markers",
+                        marker=dict(size=8),
+                        line=dict(width=2, color=palette[idx % len(palette)]),
+                        name=f"Route {idx + 1}",
+                    )
                 )
-            )
+
+    center_lat = float(df.lat.mean()) if not df.empty else 35.681236
+    center_lon = float(df.lon.mean()) if not df.empty else 139.767125
     fig.update_layout(
+        map=dict(
+            style="open-street-map",
+            zoom=10,
+            center=dict(lat=center_lat, lon=center_lon),
+        ),
         margin=dict(l=20, r=20, t=30, b=20),
-        xaxis_title="X",
-        yaxis_title="Y",
         height=500,
     )
     return fig
@@ -566,4 +721,4 @@ def update_routes(selected_nodes_list, sol):
 # --------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run_server(debug=True, use_reloader=False)
+    app.run_server(debug=True, use_reloader=True)
