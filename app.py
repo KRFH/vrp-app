@@ -31,6 +31,7 @@ def normalize_node_df(rows):
         df = df.rename(columns={"x": "lat", "y": "lon"})
     return df.sort_values("id")
 
+
 # --------------------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------------------
@@ -53,14 +54,86 @@ DEFAULT_ROWS = (
     INITIAL_SOLUTION["nodes"]
     if INITIAL_SOLUTION
     else [
-        {"id": 0, "lat": 35.681236, "lon": 139.767125, "demand": 0, "ready": 0, "due": 1440, "service": 0, "task": "depot"},
-        {"id": 1, "lat": 35.689487, "lon": 139.691711, "demand": 10, "ready": 300, "due": 720, "service": 300, "task": "delivery"},
-        {"id": 2, "lat": 35.658034, "lon": 139.751599, "demand": 15, "ready": 480, "due": 900, "service": 300, "task": "repair"},
-        {"id": 3, "lat": 35.673343, "lon": 139.710388, "demand": 8, "ready": 540, "due": 1020, "service": 200, "task": "delivery"},
-        {"id": 4, "lat": 35.652832, "lon": 139.839478, "demand": 12, "ready": 600, "due": 1080, "service": 200, "task": "maintenance"},
-        {"id": 5, "lat": 35.701298, "lon": 139.579506, "demand": 7, "ready": 360, "due": 840, "service": 150, "task": "delivery"},
-        {"id": 6, "lat": 35.733953, "lon": 139.731992, "demand": 7, "ready": 300, "due": 840, "service": 150, "task": "repair"},
-        {"id": 7, "lat": 35.710063, "lon": 139.8107, "demand": 7, "ready": 500, "due": 900, "service": 150, "task": "maintenance"},
+        {
+            "id": 0,
+            "lat": 35.681236,
+            "lon": 139.767125,
+            "demand": 0,
+            "ready": 0,
+            "due": 1440,
+            "service": 0,
+            "task": "depot",
+        },
+        {
+            "id": 1,
+            "lat": 35.689487,
+            "lon": 139.691711,
+            "demand": 10,
+            "ready": 300,
+            "due": 720,
+            "service": 300,
+            "task": "delivery",
+        },
+        {
+            "id": 2,
+            "lat": 35.658034,
+            "lon": 139.751599,
+            "demand": 15,
+            "ready": 480,
+            "due": 900,
+            "service": 300,
+            "task": "repair",
+        },
+        {
+            "id": 3,
+            "lat": 35.673343,
+            "lon": 139.710388,
+            "demand": 8,
+            "ready": 540,
+            "due": 1020,
+            "service": 200,
+            "task": "delivery",
+        },
+        {
+            "id": 4,
+            "lat": 35.652832,
+            "lon": 139.839478,
+            "demand": 12,
+            "ready": 600,
+            "due": 1080,
+            "service": 200,
+            "task": "maintenance",
+        },
+        {
+            "id": 5,
+            "lat": 35.601298,
+            "lon": 139.579506,
+            "demand": 7,
+            "ready": 360,
+            "due": 840,
+            "service": 150,
+            "task": "delivery",
+        },
+        {
+            "id": 6,
+            "lat": 35.733953,
+            "lon": 139.731992,
+            "demand": 7,
+            "ready": 300,
+            "due": 840,
+            "service": 150,
+            "task": "repair",
+        },
+        {
+            "id": 7,
+            "lat": 35.710063,
+            "lon": 139.8107,
+            "demand": 7,
+            "ready": 500,
+            "due": 900,
+            "service": 150,
+            "task": "maintenance",
+        },
     ]
 )
 
@@ -193,7 +266,9 @@ app.layout = dbc.Container(
 def add_row(n_clicks, rows):
     if n_clicks:
         next_id = max(r["id"] for r in rows) + 1 if rows else 1
-        rows.append({"id": next_id, "lat": 35.0, "lon": 139.0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""})
+        rows.append(
+            {"id": next_id, "lat": 35.0, "lon": 139.0, "demand": 1, "ready": 0, "due": 1440, "service": 10, "task": ""}
+        )
     return rows
 
 
@@ -339,17 +414,21 @@ def update_graph(tab, sol):
 
     if tab == "map":
         fig = go.Figure()
+
+        # ノード（点）
         fig.add_trace(
-            go.Scattermapbox(
+            go.Scattermap(
                 lat=df.lat,
                 lon=df.lon,
                 mode="markers+text",
-                text=df.id,
+                text=df.id.astype(str),
                 textposition="top center",
                 marker=dict(size=10),
                 name="Nodes",
             )
         )
+
+        # ルート（線＋点）
         palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
         for r in routes:
             worker = assignments.get(r.vehicle_id)
@@ -359,23 +438,34 @@ def update_graph(tab, sol):
                 )
             lats = [id2node[nid].lat for nid in r.path]
             lons = [id2node[nid].lon for nid in r.path]
+
             fig.add_trace(
-                go.Scattermapbox(
+                go.Scattermap(
                     lat=lats,
                     lon=lons,
                     mode="lines+markers",
                     marker=dict(size=6),
-                    line=dict(width=2, color=palette[r.vehicle_id % len(palette)]),
+                    line=dict(width=3),  # 色は下の update_traces で一括設定も可
                     name=f"{worker} (Veh {r.vehicle_id}, d={r.distance})",
+                    # 個別に色を付けたい場合は line=dict(color=palette[r.vehicle_id % len(palette)], width=3)
                 )
             )
+
+        # MapLibre 用レイアウト（mapbox_* ではなく map を使う）
         fig.update_layout(
-            mapbox_style="open-street-map",
-            mapbox_zoom=10,
-            mapbox_center={"lat": 35.681236, "lon": 139.767125},
+            map=dict(
+                style="open-street-map",  # 無料スタイル
+                zoom=10,
+                center=dict(lat=35.681236, lon=139.767125),
+            ),
             margin=dict(l=20, r=20, t=30, b=20),
             height=500,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )
+
+        # ルートごとに色を当てたいとき（任意）:
+        for i, r in enumerate(routes, start=1):  # 0番目はNodesなので start=1
+            fig.data[i].line.color = palette[r.vehicle_id % len(palette)]
 
         return html.Div(dcc.Graph(figure=fig))
 
@@ -439,27 +529,38 @@ def update_graph(tab, sol):
         return html.Div(dcc.Graph(figure=fig))
 
     elif tab == "route":
-        options = [{"label": f"Node {n['id']}", "value": int(n["id"])} for n in sol["nodes"]]
+        # ★ sol から毎回 df を作る
+        df = normalize_node_df(sol["nodes"])
+        options = [{"label": f"Node {int(n['id'])}", "value": int(n["id"])} for n in sol["nodes"]]
+
         fig = go.Figure()
-        if options:
+        if not df.empty:
             fig.add_trace(
-                go.Scattermapbox(
+                go.Scattermap(
                     lat=df.lat,
                     lon=df.lon,
                     mode="markers+text",
-                    text=df.id,
+                    text=df.id.astype(str),  # ★ 表示は文字列
                     textposition="top center",
                     marker=dict(size=10),
                     name="Nodes",
                 )
             )
+
+        # 中心はデータの平均に寄せると親切（任意）
+        center_lat = float(df.lat.mean()) if not df.empty else 35.681236
+        center_lon = float(df.lon.mean()) if not df.empty else 139.767125
+
         fig.update_layout(
-            mapbox_style="open-street-map",
-            mapbox_zoom=10,
-            mapbox_center={"lat": 35.681236, "lon": 139.767125},
+            map=dict(
+                style="open-street-map",
+                zoom=10,
+                center=dict(lat=center_lat, lon=center_lon),
+            ),
             margin=dict(l=20, r=20, t=30, b=20),
             height=500,
         )
+
         first_dropdown = html.Div(
             dcc.Dropdown(
                 id={"type": "route-select", "index": 0},
@@ -469,6 +570,7 @@ def update_graph(tab, sol):
             ),
             style={"marginBottom": "0.5rem"},
         )
+
         return html.Div(
             [
                 html.Div(id="route-dropdown-container", children=[first_dropdown]),
@@ -561,39 +663,53 @@ def add_route_dropdown(n_clicks, children, sol):
 def update_routes(selected_nodes_list, sol):
     if not sol:
         return go.Figure()
+
     df = normalize_node_df(sol["nodes"])
     fig = go.Figure()
-    fig.add_trace(
-        go.Scattermapbox(
-            lat=df.lat,
-            lon=df.lon,
-            mode="markers+text",
-            text=df.id,
-            textposition="top center",
-            marker=dict(size=10),
-            name="Nodes",
+
+    if not df.empty:
+        fig.add_trace(
+            go.Scattermap(
+                lat=df.lat,
+                lon=df.lon,
+                mode="markers+text",
+                text=df.id.astype(str),  # ★ 表示は文字列
+                textposition="top center",
+                marker=dict(size=10),
+                name="Nodes",
+            )
         )
-    )
-    id2node = df.set_index("id").to_dict("index")
+
+    # ★ id を int キーに（Dropdown values と型を合わせる）
+    id2node = df.set_index(df["id"].astype(int)).to_dict("index")
+
     palette = px.colors.qualitative.Plotly + px.colors.qualitative.Safe
     for idx, selected in enumerate(selected_nodes_list or []):
         if selected and len(selected) >= 2:
-            lats = [id2node[nid]["lat"] for nid in selected]
-            lons = [id2node[nid]["lon"] for nid in selected]
-            fig.add_trace(
-                go.Scattermapbox(
-                    lat=lats,
-                    lon=lons,
-                    mode="lines+markers",
-                    marker=dict(size=8),
-                    line=dict(width=2, color=palette[idx % len(palette)]),
-                    name=f"Route {idx + 1}",
+            # ★ 値は int 前提（念のためキャスト）
+            seq = [int(nid) for nid in selected if int(nid) in id2node]
+            if len(seq) >= 2:
+                lats = [id2node[n]["lat"] for n in seq]
+                lons = [id2node[n]["lon"] for n in seq]
+                fig.add_trace(
+                    go.Scattermap(
+                        lat=lats,
+                        lon=lons,
+                        mode="lines+markers",
+                        marker=dict(size=8),
+                        line=dict(width=2, color=palette[idx % len(palette)]),
+                        name=f"Route {idx + 1}",
+                    )
                 )
-            )
+
+    center_lat = float(df.lat.mean()) if not df.empty else 35.681236
+    center_lon = float(df.lon.mean()) if not df.empty else 139.767125
     fig.update_layout(
-        mapbox_style="open-street-map",
-        mapbox_zoom=10,
-        mapbox_center={"lat": 35.681236, "lon": 139.767125},
+        map=dict(
+            style="open-street-map",
+            zoom=10,
+            center=dict(lat=center_lat, lon=center_lon),
+        ),
         margin=dict(l=20, r=20, t=30, b=20),
         height=500,
     )
@@ -605,4 +721,4 @@ def update_routes(selected_nodes_list, sol):
 # --------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run_server(debug=True, use_reloader=False)
+    app.run_server(debug=True, use_reloader=True)
